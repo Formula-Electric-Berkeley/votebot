@@ -1,11 +1,38 @@
 import tinydb
+import uuid
+from abc import ABC
 
+ELECTIONS_TABLE = "elections"
 
 database = tinydb.TinyDB('db.json', indent=4)
 
 
-class User:
+class Model(ABC):
+    @classmethod
+    def from_dict(cls, mapping: dict):
+        return cls(**mapping)
+
+    def to_dict(self):
+        mapping = vars(self)
+        for k in mapping:
+            if isinstance(mapping[k], uuid.UUID):
+                mapping[k] = str(mapping[k])
+        return mapping
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.to_dict() == other.to_dict()
+
+    def __str__(self):
+        attributes = ", ".join(f"{k}={v}" for k, v in self.to_dict().items())
+        return f'{self.__class__.__name__}({attributes})'
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class User(Model):
     def __init__(self, name: str, uid: str):
+        super().__init__()
         self.name = name
         self.uid = uid
 
@@ -14,155 +41,71 @@ class User:
         parts = escaped_str[2:-1].split('|')
         return cls(name=parts[1], uid=parts[0])
 
-    @classmethod
-    def from_dict(cls, mapping: dict):
-        return cls(name=mapping['name'], uid=mapping['uid'])
-
-    def to_dict(self):
-        return {
-            'name': self.name,
-            'uid': self.uid
-        }
-
     def mention(self) -> str:
         return f'<@{self.name}>'
 
-    def __eq__(self, other):
-        return self.name == other.name and \
-               self.uid == other.uid
 
-    def __str__(self):
-        return f'User(name={self.name}, id={self.uid})'
-
-    def __repr__(self):
-        return self.__str__()
-
-
-def add_part(cart_name: str, part: str, qty: str, user: User) -> bool:
-    if cart_name not in database.tables():
-        return False
-    cart = database.table(cart_name)
-    cart.insert({
-        'part': part,
-        'qty': qty,
-        'user': user.to_dict()
-    })
-    return True
+class Election(Model):
+    def __init__(self, eid: uuid.UUID, electee_uid: str, position: str,
+                 threshold_pct: float, allowed_voter_uids: list[str], finished: bool):
+        super().__init__()
+        self.eid = eid
+        self.electee_uid = electee_uid
+        self.position = position
+        self.threshold_pct = threshold_pct
+        self.allowed_voter_uids = allowed_voter_uids
+        self.finished = finished
 
 
-def rm_part(cart_name: str, part, user: User) -> bool:
-    if cart_name not in database.tables():
-        return False
-    # TODO keep track of who removed things
-    cart = database.table(cart_name)
-    ids = cart.remove(tinydb.Query().part == part)
-    return len(ids) != 0
+class Vote(Model):
+    def __init__(self, uid: str, eid: uuid.UUID, is_yes: bool, confirmation: uuid.UUID):
+        self.uid = uid
+        self.eid = eid
+        self.is_yes = is_yes
+        self.confirmation = confirmation
+
+    @classmethod
+    def from_dict(cls, mapping: dict):
+        if not isinstance(mapping['confirmation'], uuid.UUID):
+            mapping['confirmation'] = uuid.UUID(mapping['confirmation'])
+        return cls.from_dict(mapping)
 
 
-def list_cart(cart_name: str) -> list[tuple]:
-    cart = database.table(cart_name)
-    parts = cart.all()
-    return [(part['part'], part['qty'], User.from_dict(part['user'])) for part in parts if part]
+def create_election(election: Election) -> None:
+    elections = database.table(ELECTIONS_TABLE)
+    elections.insert(election.to_dict())
+    database.table(get_votes_table_name(election.eid))
 
 
-def create_cart(cart_name: str) -> bool:
-    if cart_name in database.tables():
-        return False
-    # On the backend, this creates a table if none existed before
-    table = database.table(cart_name)
-    # This is required, otherwise the table is not serialized
-    table.insert({})
-    return True
+def list_open_elections() -> list[Election]:
+    elections_table = database.table(ELECTIONS_TABLE)
+    return [Election.from_dict(v) for v in elections_table.search(tinydb.Query().finished is False)]
 
 
-def clear_cart(cart_name: str, user: User) -> bool:
-    if cart_name not in database.tables():
-        return False
-    # Drop and re-create is the easiest way to clear
-    # Makes a new table ID, but this is OK since
-    # nothing depends on/uses the table ID
-    database.drop_table(cart_name)
-    database.table(cart_name)
-    return True
+def list_elections() -> list[Election]:
+    elections_table = database.table(ELECTIONS_TABLE)
+    return [Election.from_dict(v) for v in elections_table.all()]
 
 
-def add_approver(approver: User, user: User) -> bool:
-    approvers = database.table('approvers')
-    approvers.insert({
-        'approver': approver.to_dict(),
-        'user': user.to_dict()
-    })
-    return True
-
-
-def rm_approver(approver: User) -> bool:
-    approvers = database.table('approvers')
-    matches = approvers.search(tinydb.Query().approver == approver.to_dict())
-    if len(matches) != 1:
-        return False
-    approvers.remove(doc_ids=[matches[0].doc_id])
-    return True
-
-
-def get_approvers() -> list[User]:
-    table = database.table('approvers')
-    approvers = table.all()
-    return [User.from_dict(approver['approver']) for approver in approvers]
-
-
-def begin_approval(cart_name: str, ts: str) -> bool:
-    if cart_name not in database.tables():
-        return False
-    approvals = database.table('approvals')
-    approvals.insert({
-        'cart': cart_name,
-        'ts': ts,
-        'approvals': []
-    })
-    return True
-
-
-def get_approvals(cart_name: str):
-    if cart_name not in database.tables():
+def add_vote(eid: uuid.UUID, uid: str, is_yes: bool) -> uuid.UUID | None:
+    elections_table = database.table(ELECTIONS_TABLE)
+    election_matches = elections_table.search(tinydb.Query().eid == eid)
+    if len(election_matches) != 1:
         return None
-    approval_table = database.table('approvals')
-    matches = approval_table.search(tinydb.Query().cart == cart_name)
-    if len(matches) != 1:
+    election = Election.from_dict(election_matches[0])
+    if uid not in election.allowed_voter_uids:
         return None
-    return matches[0]['approvals'], matches[0].doc_id
 
+    votes_table = database.table(get_votes_table_name(eid))
+    vote_matches = votes_table.search(tinydb.Query().uid == uid)
+    if len(vote_matches) != 0:
+        return None
+    vote = Vote(uid, eid, is_yes, uuid.uuid4())
+    votes_table.insert(vote.to_dict())
+    return vote.confirmation
 
-def add_approval(cart_name: str, user: User, ts: str) -> bool:
-    cart_approvals, doc_id = get_approvals(cart_name)
-    # OK for approvals to be empty, but not None
-    if cart_approvals is None:
-        return False
-    approval = {
-        'user': user.to_dict(),
-        'ts': ts
-    }
-    cart_approvals.append(approval)
-    approval_table = database.table('approvals')
-    approval_table.update(doc_ids=[doc_id], fields={'approvals': cart_approvals})
-    return True
-
-
-def rm_approval(cart_name: str, user: User) -> bool:
-    approvals, doc_id = get_approvals(cart_name)
-    for approval in approvals[:]:
-        if approval['user'] == user.to_dict():
-            approvals.remove(approval)
-            approval_table = database.table('approvals')
-            approval_table.update(doc_ids=[doc_id], fields={'approvals': approvals})
-            return True
-    return False
-
-
-def clear_approvals(cart_name: str, user: User) -> bool:
-    approval_table = database.table('approvals')
-    matches = approval_table.search(tinydb.Query().cart == cart_name)
-    approval_table.remove(doc_ids=[match.doc_id for match in matches])
-    return True
+def get_votes_table_name(eid: uuid.UUID):
+    return f'votes_{eid}'
 
 
 if __name__ == '__main__':
