@@ -1,5 +1,4 @@
 import os
-import shlex
 import uuid
 
 import dotenv
@@ -7,13 +6,19 @@ from slack_bolt import App, Ack, Respond, Say
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk import WebClient
 
+import blocks
 import db
+import models
 
 dotenv.load_dotenv()
 
 CHANNEL_NAME = os.environ['CHANNEL_NAME']
 CHANNEL_ID = os.environ['CHANNEL_ID']
-ERR_TEXT = '[voting buttons cannot be rendered - please reload]'
+
+ERR_VOTE_RENDER = '[voting buttons cannot be rendered - please reload]'
+ERR_NON_ALLOWED_VOTER = 'ERROR: Vote not submitted. You are not an allowed voted.'
+ERR_USER_ALREADY_VOTED = 'ERROR: Vote not submitted. You have already voted.'
+ERR_ELECTION_FINISHED = 'ERROR: Vote not submitted. This election has finished.'
 
 app = App(token=os.environ['SLACK_BOT_TOKEN'])
 
@@ -25,82 +30,10 @@ def register_command(name, description):
     return app.command(name)
 
 
-def button_action_id(eid, is_yes):
-    return f"{eid}_{'yes' if is_yes else 'no'}"
-
-
-def gen_election_blocks(election: db.Election, electee: db.User) -> list:
-    rts_elements = [
-        {
-            "type": "text",
-            "text": "ELECTION:\n",
-            "style": {
-                "bold": True
-            }
-        },
-        {
-            "type": "text",
-            "text": "Do you confirm "
-        },
-        {
-            "type": "user",
-            "user_id": electee.uid
-        },
-        {
-            "type": "text",
-            "text": f" for the position of {election.position}?\nAllowed voters: "
-        }
-    ]
-
-    space_rts_element = {
-        "type": "text",
-        "text": " "
-    }
-    for uid in election.allowed_voter_uids:
-        rts_elements.append({
-            "type": "user",
-            "user_id": uid
-        })
-        rts_elements.append(space_rts_element)
-
-    return [
-        {
-            "type": "rich_text",
-            "elements": [
-                {
-                    "type": "rich_text_section",
-                    "elements": rts_elements
-                }
-            ]
-        },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "emoji": True,
-                        "text": "Yes"
-                    },
-                    "style": "primary",
-                    "value": "Yes",
-                    "action_id": button_action_id(election.eid, True)
-                },
-                {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "emoji": True,
-                        "text": "No"
-                    },
-                    "style": "danger",
-                    "value": "No",
-                    "action_id": button_action_id(election.eid, False)
-                }
-            ]
-        }
-    ]
+def init_election_actions():
+    for election in db.list_open_elections():
+        app.action(blocks.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
+        app.action(blocks.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
 
 
 @register_command('/vote-create', 'Create an election')
@@ -114,9 +47,18 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
     if _incorrect_num_args(respond, 4, len(args), lambda e, a: a < e):
         return
 
-    electee = db.User.from_str(args[0])
-    allowed_voters = [db.User.from_str(v).uid for v in args[3:]]
-    election = db.Election(uuid.uuid4(), electee.uid, args[1], args[2], allowed_voters, True)
+    electee = models.User.from_str(args[0])
+
+    allowed_voters = []
+    for voter_escstr in args[3:]:
+        if voter_escstr.startswith('<!subteam^'):
+            ug = models.UserGroup.from_str(voter_escstr)
+            ug_users = client.usergroups_users_list(usergroup=ug.ugid)
+            allowed_voters.extend(ug_users['users'])
+        else:
+            allowed_voters.append(models.User.from_str(voter_escstr).uid)
+
+    election = models.Election(uuid.uuid4(), electee.uid, args[1], args[2], allowed_voters, False)
     if int(election.threshold_pct) > 100:
         post_ephemeral(client, body, 'Threshold percentage greater than 100')
         return
@@ -125,23 +67,39 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
         return
     db.create_election(election)
 
-    app.action(button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
-    app.action(button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
+    app.action(blocks.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
+    app.action(blocks.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
 
-    blocks = gen_election_blocks(election, electee)
-    say(channel=CHANNEL_NAME, blocks=blocks, text=ERR_TEXT)
+    content_blocks = blocks.gen_election_blocks(election, electee)
+    say(channel=CHANNEL_NAME, blocks=content_blocks, text=ERR_VOTE_RENDER)
 
 
 def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
     def add_vote_handler(ack: Ack, say: Say, client: WebClient, body):
         ack()
-        confirmation = db.add_vote(eid, body["user"]["id"], is_yes)
-        error_msg = "Error while submitting vote. Please try again if you have not already voted and are an allowed voter."
-        success_msg = f"Thank you for voting! Your vote: {'yes' if is_yes else 'no'}. Your confirmation code is {confirmation}"
-        msg = error_msg if confirmation is None else success_msg
-        post_ephemeral(client, body, msg)
-    return add_vote_handler
 
+        uid = body["user"]["id"]
+        if db.get_election_result(eid).is_finished:
+            post_ephemeral(client, body, ERR_ELECTION_FINISHED)
+            return
+        elif not db.is_user_allowed_voter(eid, uid):
+            post_ephemeral(client, body, ERR_NON_ALLOWED_VOTER)
+            return
+        elif db.has_user_voted(eid, uid):
+            post_ephemeral(client, body, ERR_USER_ALREADY_VOTED)
+            return
+
+        confirmation = db.add_vote(eid, uid, is_yes)
+        msg = f"Thank you for voting! Your vote: {'yes' if is_yes else 'no'}. \nYour confirmation code is {confirmation}"
+        post_ephemeral(client, body, msg)
+
+        result = db.get_election_result(eid)
+        if result.is_finished:
+            db.mark_election_finished(result.election)
+            say(channel=CHANNEL_NAME, text=blocks.gen_election_result_blocks(result))
+
+
+    return add_vote_handler
 
 # @register_command('/vote-help', 'Help with using votebot')
 # def help_(ack: Ack, respond: Respond, say: Say, command: dict):
@@ -206,12 +164,6 @@ def _parse_args(command):
         args.append(text[last_split_idx:])
     return [v.replace('\"', '') for v in args]
 
-
-def init_election_actions():
-    pass
-    # for election in db.list_open_elections():
-    #     app.action(button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
-    #     app.action(button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
 
 if __name__ == '__main__':
     init_election_actions()
