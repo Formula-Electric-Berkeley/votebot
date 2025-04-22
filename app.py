@@ -90,13 +90,16 @@ def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
             return
 
         confirmation = db.add_vote(eid, uid, is_yes)
+        # TODO make this into a rich text block instead of just a text message (and look into kwargs)
+        # TODO also add election id and/or position into this
         msg = f"Thank you for voting! Your vote: {'yes' if is_yes else 'no'}. \nYour confirmation code is {confirmation}"
-        send_dm(client, [uid], msg)
+        send_dm(client, [uid], text=msg)
 
         result = db.get_election_result(eid)
         if result.is_finished:
             db.mark_election_finished(result.election)
-            say(channel=CHANNEL_NAME, text=blocks.gen_election_result_blocks(result))
+            #TODO allowed voters should either be forwarded this or replied in thread
+            say(channel=CHANNEL_NAME, blocks=blocks.gen_election_result_blocks(result))
 
     return add_vote_handler
 
@@ -132,10 +135,11 @@ def post_ephemeral(client, body, text):
     client.chat_postEphemeral(channel=CHANNEL_ID, user=body["user"]["id"], text=text)
 
 
-def send_dm(client: WebClient, uids: list[str], text: str) -> None:
+def send_dm(client: WebClient, uids: list[str], **kwargs) -> None:
+    # kwargs should contain either blocks of text
     dm_channel_resp = client.conversations_open(users=uids)
     dm_channel_id = dm_channel_resp['channel']['id']
-    client.chat_postMessage(channel=dm_channel_id, text=text)
+    client.chat_postMessage(channel=dm_channel_id, **kwargs)
 
 
 def _incorrect_channel(command, respond) -> bool:

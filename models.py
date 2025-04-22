@@ -93,7 +93,7 @@ class ElectionResult:
         no_to_fail = max(0, num_voters - yes_to_pass)
         # Must EXCEED number of no, but must MEET number of yes
         self.is_finished = self.num_yes >= yes_to_pass or self.num_no > no_to_fail
-        self.is_passed = num_yes >= yes_to_pass and self.num_no < no_to_fail
+        self.is_passed = num_yes >= yes_to_pass and self.num_no <= no_to_fail
 
 class ShortCircuitElectionResult(ElectionResult):
     def __init__(self):
