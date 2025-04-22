@@ -71,11 +71,11 @@ def has_user_voted(eid: uuid.UUID, uid: str) -> bool:
     return len(vote_matches) != 0
 
 
-def add_vote(eid: uuid.UUID, uid: str, is_yes: bool) -> uuid.UUID:
+def add_vote(eid: uuid.UUID, uid: str, is_yes: bool) -> models.Vote:
     votes_table = database.table(get_votes_table_name(eid))
     vote = models.Vote(uid, eid, is_yes, uuid.uuid4())
     votes_table.insert(vote.to_dict())
-    return vote.confirmation
+    return vote
 
 def get_votes_table_name(eid: uuid.UUID):
     return f'votes_{eid}'

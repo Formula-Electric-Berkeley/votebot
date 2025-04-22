@@ -6,7 +6,7 @@ from slack_bolt import App, Ack, Respond, Say
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk import WebClient
 
-import blocks
+import blockgen
 import db
 import models
 
@@ -32,8 +32,8 @@ def register_command(name, description):
 
 def init_election_actions():
     for election in db.list_open_elections():
-        app.action(blocks.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
-        app.action(blocks.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
+        app.action(blockgen.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
+        app.action(blockgen.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
 
 
 @register_command('/vote-create', 'Create an election')
@@ -67,18 +67,17 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
         return
     db.create_election(election)
 
-    app.action(blocks.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
-    app.action(blocks.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
+    app.action(blockgen.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
+    app.action(blockgen.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
 
-    content_blocks = blocks.gen_election_blocks(election, electee)
-    say(channel=CHANNEL_NAME, blocks=content_blocks, text=ERR_VOTE_RENDER)
+    say(channel=CHANNEL_NAME, blocks=blockgen.election(election), text=ERR_VOTE_RENDER)
 
 
 def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
     def add_vote_handler(ack: Ack, say: Say, client: WebClient, body):
         ack()
 
-        uid = body["user"]["id"]
+        uid = body['user']['id']
         if db.get_election_result(eid).is_finished:
             post_ephemeral(client, body, ERR_ELECTION_FINISHED)
             return
@@ -89,17 +88,14 @@ def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
             post_ephemeral(client, body, ERR_USER_ALREADY_VOTED)
             return
 
-        confirmation = db.add_vote(eid, uid, is_yes)
-        # TODO make this into a rich text block instead of just a text message (and look into kwargs)
-        # TODO also add election id and/or position into this
-        msg = f"Thank you for voting! Your vote: {'yes' if is_yes else 'no'}. \nYour confirmation code is {confirmation}"
-        send_dm(client, [uid], text=msg)
-
+        vote = db.add_vote(eid, uid, is_yes)
         result = db.get_election_result(eid)
+        send_dm(client, [uid], blocks=blockgen.vote_confirmation(result.election, vote))
+
         if result.is_finished:
             db.mark_election_finished(result.election)
-            #TODO allowed voters should either be forwarded this or replied in thread
-            say(channel=CHANNEL_NAME, blocks=blocks.gen_election_result_blocks(result))
+            # TODO allowed voters should either be forwarded this or replied in thread
+            say(channel=CHANNEL_NAME, blocks=blockgen.election_result(result))
 
     return add_vote_handler
 
@@ -132,14 +128,18 @@ def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
 
 
 def post_ephemeral(client, body, text):
-    client.chat_postEphemeral(channel=CHANNEL_ID, user=body["user"]["id"], text=text)
+    client.chat_postEphemeral(channel=CHANNEL_ID, user=body['user']['id'], text=text)
 
 
-def send_dm(client: WebClient, uids: list[str], **kwargs) -> None:
-    # kwargs should contain either blocks of text
+def send_dm(client: WebClient, uids: list[str], text=None, blocks=None) -> None:
     dm_channel_resp = client.conversations_open(users=uids)
     dm_channel_id = dm_channel_resp['channel']['id']
-    client.chat_postMessage(channel=dm_channel_id, **kwargs)
+    if text is not None:
+        client.chat_postMessage(channel=dm_channel_id, text=text)
+    elif blocks is not None:
+        client.chat_postMessage(channel=dm_channel_id, blocks=blocks)
+    else:
+        raise ValueError('Neither text nor blocks provided for DM')
 
 
 def _incorrect_channel(command, respond) -> bool:
@@ -163,7 +163,7 @@ def _parse_args(command):
     last_split_idx = 0
     in_quotes = False
     for i in range(len(text)):
-        if text[i] == "\"":
+        if text[i] == '\"':
             in_quotes = not in_quotes
         if text[i] == ' ' and not in_quotes:
             args.append(text[last_split_idx:i])
@@ -176,4 +176,4 @@ def _parse_args(command):
 
 if __name__ == '__main__':
     init_election_actions()
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    SocketModeHandler(app, os.environ['SLACK_APP_TOKEN']).start()
