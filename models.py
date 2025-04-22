@@ -89,11 +89,11 @@ class ElectionResult:
 
         # Always round number of yes required DOWN (floor)
         num_voters = len(self.election.allowed_voter_uids)
-        yes_to_pass = int((int(self.election.threshold_pct) / 100) * num_voters)
-        no_to_fail = num_voters - yes_to_pass
+        yes_to_pass = max(1, int((int(self.election.threshold_pct) / 100) * num_voters))
+        no_to_fail = max(0, num_voters - yes_to_pass)
         # Must EXCEED number of no, but must MEET number of yes
         self.is_finished = self.num_yes >= yes_to_pass or self.num_no > no_to_fail
-        self.is_passed = num_yes >= yes_to_pass and self.num_no <= no_to_fail
+        self.is_passed = num_yes >= yes_to_pass and self.num_no < no_to_fail
 
 class ShortCircuitElectionResult(ElectionResult):
     def __init__(self):

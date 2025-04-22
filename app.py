@@ -91,13 +91,12 @@ def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
 
         confirmation = db.add_vote(eid, uid, is_yes)
         msg = f"Thank you for voting! Your vote: {'yes' if is_yes else 'no'}. \nYour confirmation code is {confirmation}"
-        post_ephemeral(client, body, msg)
+        send_dm(client, [uid], msg)
 
         result = db.get_election_result(eid)
         if result.is_finished:
             db.mark_election_finished(result.election)
             say(channel=CHANNEL_NAME, text=blocks.gen_election_result_blocks(result))
-
 
     return add_vote_handler
 
@@ -131,6 +130,12 @@ def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
 
 def post_ephemeral(client, body, text):
     client.chat_postEphemeral(channel=CHANNEL_ID, user=body["user"]["id"], text=text)
+
+
+def send_dm(client: WebClient, uids: list[str], text: str) -> None:
+    dm_channel_resp = client.conversations_open(users=uids)
+    dm_channel_id = dm_channel_resp['channel']['id']
+    client.chat_postMessage(channel=dm_channel_id, text=text)
 
 
 def _incorrect_channel(command, respond) -> bool:
