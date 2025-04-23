@@ -1,5 +1,7 @@
-import uuid
 from abc import ABC
+
+import blockgen
+
 
 class Model(ABC):
     @classmethod
@@ -7,11 +9,7 @@ class Model(ABC):
         return cls(**mapping)
 
     def to_dict(self):
-        mapping = vars(self)
-        for k in mapping:
-            if isinstance(mapping[k], uuid.UUID):
-                mapping[k] = str(mapping[k])
-        return mapping
+        return vars(self)
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.to_dict() == other.to_dict()
@@ -55,7 +53,7 @@ class UserGroup(Model):
 
 
 class Election(Model):
-    def __init__(self, eid: uuid.UUID, electee_uid: str, position: str,
+    def __init__(self, eid: str, electee_uid: str, position: str,
                  threshold_pct: float, allowed_voter_uids: list[str], finished: bool):
         super().__init__()
         self.eid = eid
@@ -67,18 +65,12 @@ class Election(Model):
 
 
 class Vote(Model):
-    def __init__(self, uid: str, eid: uuid.UUID, is_yes: bool, confirmation: uuid.UUID):
+    def __init__(self, uid: str, eid: str, is_yes: bool, confirmation: str):
         super().__init__()
         self.uid = uid
         self.eid = eid
         self.is_yes = is_yes
         self.confirmation = confirmation
-
-    @classmethod
-    def from_dict(cls, mapping: dict):
-        if not isinstance(mapping['confirmation'], uuid.UUID):
-            mapping['confirmation'] = uuid.UUID(mapping['confirmation'])
-        return super().from_dict(mapping)
 
 
 class ElectionResult:
@@ -97,4 +89,4 @@ class ElectionResult:
 
 class ShortCircuitElectionResult(ElectionResult):
     def __init__(self):
-        super().__init__(Election(uuid.uuid4(), str(), str(), float(), list(), True), 0, 0)
+        super().__init__(Election(blockgen.random_id(), str(), str(), float(), list(), True), 0, 0)

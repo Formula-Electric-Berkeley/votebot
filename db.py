@@ -1,6 +1,6 @@
 import tinydb
-import uuid
 
+import blockgen
 import models
 
 
@@ -14,7 +14,7 @@ def create_election(election: models.Election) -> None:
     elections.insert(election.to_dict())
     database.table(get_votes_table_name(election.eid))
 
-def get_election_result(eid: uuid.UUID) -> models.ElectionResult:
+def get_election_result(eid: str) -> models.ElectionResult:
     elections_table = database.table(ELECTIONS_TABLE)
     election_matches = elections_table.search(tinydb.Query().eid == eid)
     if len(election_matches) != 1:
@@ -54,7 +54,7 @@ def list_elections() -> list[models.Election]:
     return [models.Election.from_dict(v) for v in elections_table.all()]
 
 
-def is_user_allowed_voter(eid: uuid.UUID, uid: str) -> bool:
+def is_user_allowed_voter(eid: str, uid: str) -> bool:
     elections_table = database.table(ELECTIONS_TABLE)
     election_matches = elections_table.search(tinydb.Query().eid == eid)
     if len(election_matches) != 1:
@@ -65,19 +65,19 @@ def is_user_allowed_voter(eid: uuid.UUID, uid: str) -> bool:
     return True
 
 
-def has_user_voted(eid: uuid.UUID, uid: str) -> bool:
+def has_user_voted(eid: str, uid: str) -> bool:
     votes_table = database.table(get_votes_table_name(eid))
     vote_matches = votes_table.search(tinydb.Query().uid == uid)
     return len(vote_matches) != 0
 
 
-def add_vote(eid: uuid.UUID, uid: str, is_yes: bool) -> models.Vote:
+def add_vote(eid: str, uid: str, is_yes: bool) -> models.Vote:
     votes_table = database.table(get_votes_table_name(eid))
-    vote = models.Vote(uid, eid, is_yes, uuid.uuid4())
+    vote = models.Vote(uid, eid, is_yes, blockgen.random_id())
     votes_table.insert(vote.to_dict())
     return vote
 
-def get_votes_table_name(eid: uuid.UUID):
+def get_votes_table_name(eid: str):
     return f'votes_{eid}'
 
 

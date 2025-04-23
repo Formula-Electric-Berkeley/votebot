@@ -1,10 +1,10 @@
 import os
-import uuid
 
 import dotenv
 from slack_bolt import App, Ack, Respond, Say
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from slack_sdk import WebClient
+from slack_sdk.web import SlackResponse
 
 import blockgen
 import db
@@ -16,6 +16,7 @@ CHANNEL_NAME = os.environ['CHANNEL_NAME']
 CHANNEL_ID = os.environ['CHANNEL_ID']
 
 ERR_VOTE_RENDER = '[voting buttons cannot be rendered - please reload]'
+ERR_DM_RENDER = '[this DM was not sent correctly - please try again]'
 ERR_NON_ALLOWED_VOTER = 'ERROR: Vote not submitted. You are not an allowed voted.'
 ERR_USER_ALREADY_VOTED = 'ERROR: Vote not submitted. You have already voted.'
 ERR_ELECTION_FINISHED = 'ERROR: Vote not submitted. This election has finished.'
@@ -32,8 +33,8 @@ def register_command(name, description):
 
 def init_election_actions():
     for election in db.list_open_elections():
-        app.action(blockgen.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
-        app.action(blockgen.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
+        app.action(blockgen.button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
+        app.action(blockgen.button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
 
 
 @register_command('/vote-create', 'Create an election')
@@ -58,7 +59,7 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
         else:
             allowed_voters.append(models.User.from_str(voter_escstr).uid)
 
-    election = models.Election(uuid.uuid4(), electee.uid, args[1], args[2], allowed_voters, False)
+    election = models.Election(blockgen.random_id(), electee.uid, args[1], args[2], allowed_voters, False)
     if int(election.threshold_pct) > 100:
         post_ephemeral(client, body, 'Threshold percentage greater than 100')
         return
@@ -67,13 +68,13 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
         return
     db.create_election(election)
 
-    app.action(blockgen.button_action_id(str(election.eid), True))(gen_add_vote_handler(election.eid, True))
-    app.action(blockgen.button_action_id(str(election.eid), False))(gen_add_vote_handler(election.eid, False))
+    app.action(blockgen.button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
+    app.action(blockgen.button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
 
     say(channel=CHANNEL_NAME, blocks=blockgen.election(election), text=ERR_VOTE_RENDER)
 
 
-def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
+def gen_add_vote_handler(eid: str, is_yes: bool):
     def add_vote_handler(ack: Ack, say: Say, client: WebClient, body):
         ack()
 
@@ -95,7 +96,11 @@ def gen_add_vote_handler(eid: uuid.UUID, is_yes: bool):
         if result.is_finished:
             db.mark_election_finished(result.election)
             # TODO allowed voters should either be forwarded this or replied in thread
-            say(channel=CHANNEL_NAME, blocks=blockgen.election_result(result))
+            announcement = say(channel=CHANNEL_NAME, blocks=blockgen.election_result(result))
+            announcement_url = client.chat_getPermalink(channel=CHANNEL_ID, message_ts=announcement['ts'])
+            for voter_uid in result.election.allowed_voter_uids:
+                # Send SEPARATE DMs to each allowed voter instead of one group DM
+                send_dm(client, [voter_uid], blocks=blockgen.url_forward(announcement_url['permalink']))
 
     return add_vote_handler
 
@@ -131,13 +136,13 @@ def post_ephemeral(client, body, text):
     client.chat_postEphemeral(channel=CHANNEL_ID, user=body['user']['id'], text=text)
 
 
-def send_dm(client: WebClient, uids: list[str], text=None, blocks=None) -> None:
+def send_dm(client: WebClient, uids: list[str], text=None, blocks=None) -> SlackResponse:
     dm_channel_resp = client.conversations_open(users=uids)
     dm_channel_id = dm_channel_resp['channel']['id']
     if text is not None:
-        client.chat_postMessage(channel=dm_channel_id, text=text)
+        return client.chat_postMessage(channel=dm_channel_id, text=text, unfurl_links=True)
     elif blocks is not None:
-        client.chat_postMessage(channel=dm_channel_id, blocks=blocks)
+        return client.chat_postMessage(channel=dm_channel_id, blocks=blocks, text=ERR_DM_RENDER, unfurl_links=True)
     else:
         raise ValueError('Neither text nor blocks provided for DM')
 

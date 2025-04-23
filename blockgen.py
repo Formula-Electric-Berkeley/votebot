@@ -1,5 +1,7 @@
-import models
 from abc import ABC, abstractmethod
+import models
+import random
+import string
 
 
 class GenBase(ABC):
@@ -75,6 +77,19 @@ class GenRTSectionText(GenRTSection):
         }
 
 
+class GenRTSectionLink(GenRTSection):
+    def __init__(self, text: str, url: str):
+        self.text = text
+        self.url = url
+
+    def generate(self) -> dict:
+        return {
+            "type": "link",
+            "text": self.text,
+            "url": self.url
+        }
+
+
 class GenRT(GenBase):
     def __init__(self, elements: list[GenRTSection]):
         self.elements = elements
@@ -125,8 +140,8 @@ def election(election_: models.Election) -> list[dict]:
     rt_sections.extend(_rts_users(election_))
     rt_sections.append(GenRTSectionText(f'\r\nElection ID: {election_.eid}', italic=True))
     buttons = [
-        GenActionButton('Yes', button_action_id(election_.eid, False), False),
-        GenActionButton('No', button_action_id(election_.eid, True), True)
+        GenActionButton('Yes', button_action_id(election_.eid, True), False),
+        GenActionButton('No', button_action_id(election_.eid, False), True)
     ]
     return [
         GenRT(rt_sections).generate(),
@@ -177,5 +192,12 @@ def vote_confirmation(election_: models.Election, vote: models.Vote) -> list[dic
     return [GenRT(rt_sections).generate()]
 
 
-def button_action_id(eid, is_yes):
+def url_forward(url: str) -> list[dict]:
+    return [GenRT([GenRTSectionLink('An election you are allowed to vote in has concluded', url)]).generate()]
+
+def button_action_id(eid: str, is_yes: bool) -> str:
     return f'{eid}_{"yes" if is_yes else "no"}'
+
+
+def random_id(length: int = 8) -> str:
+    return ''.join(random.choices(string.digits + string.ascii_letters, k=length))
