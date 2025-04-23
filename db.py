@@ -77,6 +77,13 @@ def add_vote(eid: str, uid: str, is_yes: bool) -> models.Vote:
     votes_table.insert(vote.to_dict())
     return vote
 
+
+def is_vote_valid(eid: str, confirmation: str) -> bool:
+    votes_table = database.table(get_votes_table_name(eid))
+    matches = votes_table.search(tinydb.Query().confirmation == confirmation and tinydb.Query.eid == eid)
+    return len(matches) == 1
+
+
 def get_votes_table_name(eid: str):
     return f'votes_{eid}'
 

@@ -104,32 +104,62 @@ def gen_add_vote_handler(eid: str, is_yes: bool):
 
     return add_vote_handler
 
-# @register_command('/vote-help', 'Help with using votebot')
-# def help_(ack: Ack, respond: Respond, say: Say, command: dict):
+
+@register_command('/vote-confirm', 'Confirm a vote was counted')
+def confirm_(ack: Ack, respond: Respond, command: dict):
+    print(command)
+    ack()
+
+    if _incorrect_channel(command, respond):
+        return
+    args = _parse_args(command)
+    if _incorrect_num_args(respond, 2, len(args)):
+        return
+    eid, confirmation = args
+
+    if db.is_vote_valid(eid, confirmation):
+        respond(text='This vote is valid!')
+    else:
+        respond(text='This vote is invalid. If you believe this to be in error, '
+                     'confirm your confirmation and election ID, or try voting again.')
+
+
+# @register_command('/vote-check', 'Check the current results of an election')
+# def check_(ack: Ack, respond: Respond, command: dict):
+#     print(command)
 #     ack()
 #
 #     if _incorrect_channel(command, respond):
 #         return
 #     args = _parse_args(command)
-#     if len(args) not in (0, 1):
-#         _incorrect_num_args(respond, '0 or 1', len(args))
+#     if _incorrect_num_args(respond, 2, len(args)):
 #         return
-#     if len(args) == 0:
-#         args.append(False)
-#     send_public = args[0]
+#     eid, confirmation = args
 #
-#     cmds_str = '\n'.join([f'{n}: {d}' for n, d in commands])
-#     text = '*shopbot*\n\n' \
-#            'A slack bot that manages purchasing / shopping carts.\n\n' \
-#            '*All commands:*\n' \
-#            f'{cmds_str}\n\n' \
-#            '*Quickstart:*\n' \
-#            '1. Create a cart.\n' \
-#            '2. Add items to the cart.\n' \
-#            '3. Buy the cart. Approvers will react to the message to approve the purchase.\n' \
-#            '4. Once approved, the cart is cleared. Repeat from the beginning for another cart.\n' \
-#            '(note: approvers must be added before they can approve any purchases)\n'
-#     say(channel=CHANNEL_NAME, text=text) if send_public else respond(text=text)
+
+
+@register_command('/vote-help', 'Help with using votebot')
+def help_(ack: Ack, respond: Respond, command: dict):
+    ack()
+
+    if _incorrect_channel(command, respond):
+        return
+    args = _parse_args(command)
+    if _incorrect_num_args(respond, 0, len(args)):
+        return
+
+    cmds_str = '\n'.join([f'{n}: {d}' for n, d in commands])
+    text = '*votebot*\n\n' \
+           'A slack bot that manages elections.\n\n' \
+           '*All commands:*\n' \
+           f'{cmds_str}\n\n' \
+           '*Quickstart:*\n' \
+           '1. Create an election (/vote-create).\n' \
+           '2. Allowed voters click one of the voting buttons in the created message.\n' \
+           '3. Voters will get a DM confirming their vote, and can re-confirm at any time (/vote-confirm). \n' \
+           '4. Once the election has finished, a message will be send by votebot with the final vote.\n' \
+           'The creator of the election may check the vote count at any time (/vote-check). \n'
+    respond(text=text)
 
 
 def post_ephemeral(client, body, text):
