@@ -107,9 +107,10 @@ def gen_add_vote_handler(eid: str, is_yes: bool):
             # TODO allowed voters should either be forwarded this or replied in thread
             announcement = say(channel=CHANNEL_NAME, blocks=blockgen.election_result(result))
             announcement_url = client.chat_getPermalink(channel=CHANNEL_ID, message_ts=announcement['ts'])
+            announcement_text = f'An election you are allowed to vote in has concluded: {announcement_url["permalink"]}'
             for voter_uid in result.election.allowed_voter_uids:
                 # Send SEPARATE DMs to each allowed voter instead of one group DM
-                send_dm(client, [voter_uid], blocks=blockgen.url_forward(announcement_url['permalink']))
+                send_dm(client, [voter_uid], text=announcement_text)
 
     return add_vote_handler
 
@@ -168,12 +169,6 @@ def check_(ack: Ack, respond: Respond, command: dict, body):
 def help_(ack: Ack, respond: Respond, command: dict):
     print(command)
     ack()
-
-    if _incorrect_channel(command, respond):
-        return
-    args = _parse_args(command)
-    if _incorrect_num_args(respond, 0, len(args)):
-        return
 
     cmds_str = '\n'.join([f'{n}: {d}' for n, d in commands])
     text = '*votebot*\n\n' \

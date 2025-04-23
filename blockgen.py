@@ -77,19 +77,6 @@ class GenRTSectionText(GenRTSection):
         }
 
 
-class GenRTSectionLink(GenRTSection):
-    def __init__(self, text: str, url: str):
-        self.text = text
-        self.url = url
-
-    def generate(self) -> dict:
-        return {
-            "type": "link",
-            "text": self.text,
-            "url": self.url
-        }
-
-
 class GenRT(GenBase):
     def __init__(self, elements: list[GenRTSection]):
         self.elements = elements
@@ -122,17 +109,17 @@ def election(election_: models.Election) -> list[dict]:
     Generate Slack API blocks for the announcement of a single election
 
     Message displayed:
-        > **ELECTION:**
+        > **ELECTION**
         > Do you confirm [ELECTEE] for the position of [POSITION]?
         > Allowed voters: [ALLOWED_VOTERS...]
-        > __Election ID: [ELECTION_ID]
+        > __Election ID: [ELECTION_ID]__
         > [YES_BUTTON] [NO_BUTTON]
 
     :param election_: the election to announce
     :return: the resulting Slack API compliant blocks
     """
     rt_sections = [
-        GenRTSectionText('ELECTION:\r\n', bold=True),
+        GenRTSectionText('ELECTION\r\n', bold=True),
         GenRTSectionText('Do you confirm '),
         GenRTSectionUser(election_.electee_uid),
         GenRTSectionText(f' for the position of {election_.position}?\r\nAllowed voters: '),
@@ -154,10 +141,11 @@ def election_result(result: models.ElectionResult) -> list[dict]:
     Generate Slack API blocks for the result of a single election.
 
     Message displayed:
-        > The election of [ELECTEE] for [POSITION] has concluded ([ELECTION_ID])!
+        > The election of [ELECTEE] for [POSITION] has concluded!
         > The final vote **[PASSED/FAILED]** with a vote of [NUM_YES] yes to [NUM_NO] no ([VOTE_PCT]%).
         > The threshold for this election was [THRESHOLD_PCT]% of [NUM_VOTERS] allowed voters [THRESHOLD_VOTERS].
         > Reporting percentage was [REPORTING_PCT] ([REPORTING_VOTERS]/[NUM_VOTERS]).
+        > __Election ID: [ELECTION_ID]__
 
     :param result: the input election result to format into blocks
     :return: the resulting Slack API compliant blocks
@@ -165,29 +153,40 @@ def election_result(result: models.ElectionResult) -> list[dict]:
     threshold_pct = int(result.election.threshold_pct)
     threshold_voters = max(1, int(threshold_pct / 100 * result.num_voters))
     rt_sections = [
+        GenRTSectionText('ELECTION RESULT\r\n', bold=True),
         GenRTSectionText('The election of '),
         GenRTSectionUser(result.election.electee_uid),
-        GenRTSectionText(f' for {result.election.position} has concluded ({result.election.eid})!\r\nThe final vote '),
+        GenRTSectionText(f' for {result.election.position} has concluded!\r\nThe final vote '),
         GenRTSectionText('PASSED' if result.is_passed else 'FAILED', bold=True),
         GenRTSectionText(f' with a vote of {result.num_yes} yes to {result.num_no} no ({result.vote_pct}%).\r\n'
                          f'The threshold for this election was {threshold_pct}% of {result.num_voters} '
                          f'allowed voters ({threshold_voters}).\r\nReporting percentage was {result.reporting_pct}% '
-                         f'({result.reporting_voters}/{result.num_voters}).'),
+                         f'({result.reporting_voters}/{result.num_voters}).\r\n'),
+        GenRTSectionText(f'Election ID: {result.election.eid}', italic=True)
     ]
     return [GenRT(rt_sections).generate()]
 
 
 def vote_confirmation(election_: models.Election, vote: models.Vote) -> list[dict]:
+    """
+    Generate Slack API blocks for the confirmation of a vote.
+
+    Message displayed:
+        > Thank you for voting in the election of [ELECTEE] for [POSITION].
+        > Your vote: **[VOTE]**
+        > Your confirmation code: [CONFIRMATION_CODE]
+        > __Election ID: [ELECTION_ID]__
+
+    :param election_: the Election that was voted in
+    :param vote: the Vote that was submitted to the passed Election
+    :return: the resulting Slack API compliant blocks
+    """
     rt_sections = [
         GenRTSectionText('Thank you for voting in the election of '),
         GenRTSectionUser(election_.electee_uid),
         GenRTSectionText(f' for {election_.position}.\r\nYour vote: '),
         GenRTSectionText('yes' if vote.is_yes else 'no', bold=True),
-        GenRTSectionText(f'\r\nYour confirmation code: {vote.confirmation}')
+        GenRTSectionText(f'\r\nYour confirmation code: {vote.confirmation}\r\n'),
+        GenRTSectionText(f'Election ID: {election_.eid}', italic=True)
     ]
     return [GenRT(rt_sections).generate()]
-
-
-def url_forward(url: str) -> list[dict]:
-    return [GenRT([GenRTSectionLink('An election you are allowed to vote in has concluded', url)]).generate()]
-
