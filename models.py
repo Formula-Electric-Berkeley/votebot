@@ -1,6 +1,6 @@
 from abc import ABC
 
-import blockgen
+import util
 
 
 class Model(ABC):
@@ -53,14 +53,15 @@ class UserGroup(Model):
 
 
 class Election(Model):
-    def __init__(self, eid: str, electee_uid: str, position: str,
-                 threshold_pct: float, allowed_voter_uids: list[str], finished: bool):
+    def __init__(self, eid: str, electee_uid: str, position: str, threshold_pct: float,
+                 allowed_voter_uids: list[str], creator_uid: str, finished: bool):
         super().__init__()
         self.eid = eid
         self.electee_uid = electee_uid
         self.position = position
         self.threshold_pct = threshold_pct
         self.allowed_voter_uids = allowed_voter_uids
+        self.creator_uid = creator_uid
         self.finished = finished
 
 
@@ -79,14 +80,27 @@ class ElectionResult:
         self.num_yes = num_yes
         self.num_no = num_no
 
+        self.num_voters = len(election.allowed_voter_uids)
+        self.reporting_voters = num_no + num_yes
+        self.vote_pct = 0 if self.reporting_voters == 0 else int(100 * num_yes / self.reporting_voters)
+        self.reporting_pct = 0 if self.num_voters == 0 else int(100 * self.reporting_voters / self.num_voters)
+
         # Always round number of yes required DOWN (floor)
-        num_voters = len(self.election.allowed_voter_uids)
-        yes_to_pass = max(1, int((int(self.election.threshold_pct) / 100) * num_voters))
-        no_to_fail = max(0, num_voters - yes_to_pass)
+        yes_to_pass = max(1, int((int(self.election.threshold_pct) / 100) * self.num_voters))
+        no_to_fail = max(0, self.num_voters - yes_to_pass)
         # Must EXCEED number of no, but must MEET number of yes
         self.is_finished = self.num_yes >= yes_to_pass or self.num_no > no_to_fail
         self.is_passed = num_yes >= yes_to_pass and self.num_no <= no_to_fail
 
+
+BLANK_ELECTION = Election(util.random_id(), str(), str(), float(), list(), str(), True)
+
+
 class ShortCircuitElectionResult(ElectionResult):
     def __init__(self):
-        super().__init__(Election(blockgen.random_id(), str(), str(), float(), list(), True), 0, 0)
+        super().__init__(BLANK_ELECTION, 0, 0)
+
+
+class InvalidPermissionsElectionResult(ElectionResult):
+    def __init__(self):
+        super().__init__(BLANK_ELECTION, 0, 0)

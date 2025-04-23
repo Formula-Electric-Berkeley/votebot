@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import models
-import random
-import string
+
+import util
 
 
 class GenBase(ABC):
@@ -140,8 +140,8 @@ def election(election_: models.Election) -> list[dict]:
     rt_sections.extend(_rts_users(election_))
     rt_sections.append(GenRTSectionText(f'\r\nElection ID: {election_.eid}', italic=True))
     buttons = [
-        GenActionButton('Yes', button_action_id(election_.eid, True), False),
-        GenActionButton('No', button_action_id(election_.eid, False), True)
+        GenActionButton('Yes', util.button_action_id(election_.eid, True), False),
+        GenActionButton('No', util.button_action_id(election_.eid, False), True)
     ]
     return [
         GenRT(rt_sections).generate(),
@@ -154,30 +154,26 @@ def election_result(result: models.ElectionResult) -> list[dict]:
     Generate Slack API blocks for the result of a single election.
 
     Message displayed:
-        > The election of [ELECTEE] for [POSITION] has concluded!
+        > The election of [ELECTEE] for [POSITION] has concluded ([ELECTION_ID])!
         > The final vote **[PASSED/FAILED]** with a vote of [NUM_YES] yes to [NUM_NO] no ([VOTE_PCT]%).
         > The threshold for this election was [THRESHOLD_PCT]% of [NUM_VOTERS] allowed voters [THRESHOLD_VOTERS].
-        >
-        > CC all allowed voters: [ALLOWED_VOTERS...]
+        > Reporting percentage was [REPORTING_PCT] ([REPORTING_VOTERS]/[NUM_VOTERS]).
 
     :param result: the input election result to format into blocks
     :return: the resulting Slack API compliant blocks
     """
-    num_voters = len(result.election.allowed_voter_uids)
     threshold_pct = int(result.election.threshold_pct)
-    vote_pct = int(100 * result.num_yes / (result.num_no + result.num_yes))
-    threshold_voters = max(1, int(threshold_pct / 100 * num_voters))
-
+    threshold_voters = max(1, int(threshold_pct / 100 * result.num_voters))
     rt_sections = [
         GenRTSectionText('The election of '),
         GenRTSectionUser(result.election.electee_uid),
-        GenRTSectionText(f' for {result.election.position} has concluded!\r\nThe final vote '),
+        GenRTSectionText(f' for {result.election.position} has concluded ({result.election.eid})!\r\nThe final vote '),
         GenRTSectionText('PASSED' if result.is_passed else 'FAILED', bold=True),
-        GenRTSectionText(f' with a vote of {result.num_yes} yes to {result.num_no} no ({vote_pct}%).\r\n'
-                         f'The threshold for this election was {threshold_pct}% of {num_voters} '
-                         f'allowed voters ({threshold_voters})\r\n\r\nCC all allowed voters: '),
+        GenRTSectionText(f' with a vote of {result.num_yes} yes to {result.num_no} no ({result.vote_pct}%).\r\n'
+                         f'The threshold for this election was {threshold_pct}% of {result.num_voters} '
+                         f'allowed voters ({threshold_voters}).\r\nReporting percentage was {result.reporting_pct}% '
+                         f'({result.reporting_voters}/{result.num_voters}).'),
     ]
-    rt_sections.extend(_rts_users(result.election))
     return [GenRT(rt_sections).generate()]
 
 
@@ -195,9 +191,3 @@ def vote_confirmation(election_: models.Election, vote: models.Vote) -> list[dic
 def url_forward(url: str) -> list[dict]:
     return [GenRT([GenRTSectionLink('An election you are allowed to vote in has concluded', url)]).generate()]
 
-def button_action_id(eid: str, is_yes: bool) -> str:
-    return f'{eid}_{"yes" if is_yes else "no"}'
-
-
-def random_id(length: int = 8) -> str:
-    return ''.join(random.choices(string.digits + string.ascii_letters, k=length))

@@ -1,7 +1,7 @@
 import tinydb
 
-import blockgen
 import models
+import util
 
 
 ELECTIONS_TABLE = "elections"
@@ -14,14 +14,18 @@ def create_election(election: models.Election) -> None:
     elections.insert(election.to_dict())
     database.table(get_votes_table_name(election.eid))
 
-def get_election_result(eid: str) -> models.ElectionResult:
+def get_election_result(eid: str, requestor_uid: str = None) -> models.ElectionResult:
     elections_table = database.table(ELECTIONS_TABLE)
     election_matches = elections_table.search(tinydb.Query().eid == eid)
     if len(election_matches) != 1:
         return models.ShortCircuitElectionResult()
     election = models.Election.from_dict(election_matches[0])
-    if election.finished:
+    if requestor_uid is not None:
+        if requestor_uid != election.creator_uid:
+            return models.InvalidPermissionsElectionResult()
+    elif election.finished:
         # Return immediately if election was previously finished
+        # Do not immediately return if checking vote (requestor UID passed)
         return models.ShortCircuitElectionResult()
 
     # If election not previously finished, calculate if it is now
@@ -73,14 +77,14 @@ def has_user_voted(eid: str, uid: str) -> bool:
 
 def add_vote(eid: str, uid: str, is_yes: bool) -> models.Vote:
     votes_table = database.table(get_votes_table_name(eid))
-    vote = models.Vote(uid, eid, is_yes, blockgen.random_id())
+    vote = models.Vote(uid, eid, is_yes, util.random_id())
     votes_table.insert(vote.to_dict())
     return vote
 
 
 def is_vote_valid(eid: str, confirmation: str) -> bool:
     votes_table = database.table(get_votes_table_name(eid))
-    matches = votes_table.search(tinydb.Query().confirmation == confirmation and tinydb.Query.eid == eid)
+    matches = votes_table.search(tinydb.Query().confirmation == confirmation and tinydb.Query().eid == eid)
     return len(matches) == 1
 
 

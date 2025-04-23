@@ -9,6 +9,7 @@ from slack_sdk.web import SlackResponse
 import blockgen
 import db
 import models
+import util
 
 dotenv.load_dotenv()
 
@@ -33,8 +34,8 @@ def register_command(name, description):
 
 def init_election_actions():
     for election in db.list_open_elections():
-        app.action(blockgen.button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
-        app.action(blockgen.button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
+        app.action(util.button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
+        app.action(util.button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
 
 
 @register_command('/vote-create', 'Create an election')
@@ -59,7 +60,15 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
         else:
             allowed_voters.append(models.User.from_str(voter_escstr).uid)
 
-    election = models.Election(blockgen.random_id(), electee.uid, args[1], args[2], allowed_voters, False)
+    election = models.Election(
+        util.random_id(),
+        electee.uid,
+        args[1],
+        args[2],
+        allowed_voters,
+        _uid_from_body(body),
+        False
+    )
     if int(election.threshold_pct) > 100:
         post_ephemeral(client, body, 'Threshold percentage greater than 100')
         return
@@ -68,8 +77,8 @@ def create_(ack: Ack, respond: Respond, say: Say, client: WebClient, command: di
         return
     db.create_election(election)
 
-    app.action(blockgen.button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
-    app.action(blockgen.button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
+    app.action(util.button_action_id(election.eid, True))(gen_add_vote_handler(election.eid, True))
+    app.action(util.button_action_id(election.eid, False))(gen_add_vote_handler(election.eid, False))
 
     say(channel=CHANNEL_NAME, blocks=blockgen.election(election), text=ERR_VOTE_RENDER)
 
@@ -78,7 +87,7 @@ def gen_add_vote_handler(eid: str, is_yes: bool):
     def add_vote_handler(ack: Ack, say: Say, client: WebClient, body):
         ack()
 
-        uid = body['user']['id']
+        uid = _uid_from_body(body)
         if db.get_election_result(eid).is_finished:
             post_ephemeral(client, body, ERR_ELECTION_FINISHED)
             return
@@ -116,6 +125,8 @@ def confirm_(ack: Ack, respond: Respond, command: dict):
     if _incorrect_num_args(respond, 2, len(args)):
         return
     eid, confirmation = args
+    # Remove rich text formatting from eid (i.e. copying from vote-create)
+    eid = util.clean_alphanumeric(eid)
 
     if db.is_vote_valid(eid, confirmation):
         respond(text='This vote is valid!')
@@ -124,22 +135,38 @@ def confirm_(ack: Ack, respond: Respond, command: dict):
                      'confirm your confirmation and election ID, or try voting again.')
 
 
-# @register_command('/vote-check', 'Check the current results of an election')
-# def check_(ack: Ack, respond: Respond, command: dict):
-#     print(command)
-#     ack()
-#
-#     if _incorrect_channel(command, respond):
-#         return
-#     args = _parse_args(command)
-#     if _incorrect_num_args(respond, 2, len(args)):
-#         return
-#     eid, confirmation = args
-#
+@register_command('/vote-check', 'Check the current results of an election')
+def check_(ack: Ack, respond: Respond, command: dict, body):
+    print(command)
+    ack()
+
+    if _incorrect_channel(command, respond):
+        return
+    args = _parse_args(command)
+    if _incorrect_num_args(respond, 1, len(args)):
+        return
+    eid = args[0]
+    # Remove rich text formatting from eid (i.e. copying from vote-create)
+    eid = util.clean_alphanumeric(eid)
+
+    sender_uid = _uid_from_body(body)
+    result = db.get_election_result(eid, requestor_uid=sender_uid)
+    if isinstance(result, models.InvalidPermissionsElectionResult):
+        respond(text='You do not have permissions to check this election\'s results!')
+    elif isinstance(result, models.ShortCircuitElectionResult):
+        respond(text='This election is invalid. If you believe this to be in error, '
+                     'confirm the election ID and try again.')
+    else:
+        status_msg = f'The current status of the election with election ID {eid} is ' \
+                     f'{result.num_yes} yes to {result.num_no} no ({result.vote_pct}%).' \
+                     f'\r\nReporting percentage was {result.reporting_pct}% ' \
+                     f'({result.reporting_voters}/{result.num_voters}).'
+        respond(text=status_msg)
 
 
 @register_command('/vote-help', 'Help with using votebot')
 def help_(ack: Ack, respond: Respond, command: dict):
+    print(command)
     ack()
 
     if _incorrect_channel(command, respond):
@@ -163,7 +190,7 @@ def help_(ack: Ack, respond: Respond, command: dict):
 
 
 def post_ephemeral(client, body, text):
-    client.chat_postEphemeral(channel=CHANNEL_ID, user=body['user']['id'], text=text)
+    client.chat_postEphemeral(channel=CHANNEL_ID, user=_uid_from_body(body), text=text)
 
 
 def send_dm(client: WebClient, uids: list[str], text=None, blocks=None) -> SlackResponse:
@@ -190,6 +217,10 @@ def _incorrect_num_args(respond, expected, actual, op=lambda e, a: e != a):
     if is_incorrect:
         respond(text=f'Incorrect number of arguments. Expected {expected}, got {actual}.')
     return is_incorrect
+
+
+def _uid_from_body(body) -> str:
+    return body.get('user_id') if 'user_id' in body else body.get('user').get('id')
 
 
 def _parse_args(command):
